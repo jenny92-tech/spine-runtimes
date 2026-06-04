@@ -1,13 +1,7 @@
 name: 🛠 Build spine-godot extension linux arm64
 
-# Native linux/arm64 build of the spine-godot GDExtension for handheld ports.
-# Upstream spine-godot-extension-v4 builds only linux/x86_64 (and android arm64);
-# this reuses spine's own setup-extension.sh / build-extension.sh on a native
-# arm64 runner. No secrets needed. MUST live on the 4.2 branch (spine 4.2.43 data).
-#
-# GODOT_TAG 4.5.1-stable -> setup-extension.sh derives godot-cpp branch "4.5",
-# so the extension targets Godot 4.5 (the game is 4.5.1). Do NOT use the upstream
-# all.yml default (4.6.1) — that extension would refuse to load on Godot 4.5.1.
+# Build for OLD-glibc handhelds (e.g. TrimUI Smart Pro = glibc 2.33).
+# Native arm64 runner; ubuntu 20.04 container so libc/libm symbols stay ≤ 2.31.
 
 on:
   workflow_dispatch:
@@ -18,34 +12,48 @@ env:
 
 jobs:
   build-linux-arm64:
-    name: spine-godot GDExtension linux arm64 (Godot 4.5)
+    name: spine-godot GDExtension linux arm64 (Godot 4.5, glibc≤2.31)
     runs-on: ubuntu-24.04-arm
+    container:
+      image: ubuntu:20.04
     steps:
+      - name: System prereqs inside container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y \
+            ca-certificates curl git python3 python3-pip \
+            build-essential pkg-config \
+            libx11-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libglu-dev \
+            libasound2-dev libpulse-dev libudev-dev libxi-dev libxrandr-dev
+          ldd --version | head -1
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Setup python and scons
-        uses: ./.github/actions/setup-godot-deps-4
-        with:
-          python-arch: arm64
-
-      - name: Install dependencies
+      - name: scons via pip
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential scons pkg-config \
-            libx11-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libglu-dev \
-            libasound2-dev libpulse-dev libudev-dev libxi-dev libxrandr-dev
+          python3 -m pip install --upgrade pip
+          python3 -m pip install scons==4.7.0
+          scons --version
 
-      - name: Build GDExtension (linux arm64)
+      - name: Build GDExtension (linux arm64, glibc≤2.31)
         run: |
           cd spine-godot/build
           ./setup-extension.sh "$GODOT_TAG" "$DEV_BUILD"
           ./build-extension.sh linux arm64
 
-      - name: Upload artifacts
+      - name: Verify GLIBC requirement on built .so
+        run: |
+          for so in spine-godot/example-v4-extension/bin/linux/*.so; do
+            echo "--- $so ---"
+            objdump -T "$so" | awk '/GLIBC_/{print $5}' | sort -u
+          done
+
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: spine-godot-linux-arm64
+          name: spine-godot-linux-arm64-glibc2.31
           path: spine-godot/example-v4-extension/bin/linux/*.so
           if-no-files-found: error
